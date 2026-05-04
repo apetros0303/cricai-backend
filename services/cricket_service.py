@@ -124,15 +124,21 @@ class CricketService:
             return None
 
     async def get_upcoming_matches(self, series_id: str | None = None) -> list[CricketMatch]:
-        """Fetch upcoming + in-progress matches, optionally filtered by series."""
-        try:
-            raw_list = await self.client.get_matches()
-        except Exception as e:
-            logger.error(f"Failed to fetch matches: {e}")
-            return []
+        """Fetch upcoming + in-progress matches from both endpoints, deduped."""
+        raw_list: list[dict] = []
+        for fetch in (self.client.get_current_matches, self.client.get_matches):
+            try:
+                raw_list.extend(await fetch())
+            except Exception as e:
+                logger.warning(f"Match fetch failed ({fetch.__name__}): {e}")
 
-        matches = []
+        seen: set[str] = set()
+        matches: list[CricketMatch] = []
         for raw in raw_list:
+            mid = raw.get("id", "")
+            if mid in seen:
+                continue
+            seen.add(mid)
             m = self._build_match(raw)
             if m and (not series_id or m.series_id == series_id):
                 matches.append(m)
