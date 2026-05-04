@@ -56,6 +56,22 @@ async def health():
     }
 
 
+@app.get("/debug/raw")
+async def debug_raw():
+    import httpx
+    key = settings.CRICAPI_KEY
+    results = {}
+    for endpoint in ("currentMatches", "matches"):
+        url = f"https://api.cricapi.com/v1/{endpoint}"
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                r = await http.get(url, params={"apikey": key, "offset": 0})
+            results[endpoint] = {"status_code": r.status_code, "body": r.json()}
+        except Exception as e:
+            results[endpoint] = {"error": repr(e)}
+    return results
+
+
 @app.get("/")
 async def root():
     return {"message": "CricAI API", "docs": "/docs"}
