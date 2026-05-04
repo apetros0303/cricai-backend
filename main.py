@@ -58,17 +58,23 @@ async def health():
 
 @app.get("/debug/raw")
 async def debug_raw():
-    import httpx
-    key = settings.CRICAPI_KEY
-    results = {"key_length": len(key), "key_preview": f"{key[:8]}...{key[-4:]}"}
-    for endpoint in ("currentMatches",):
-        url = f"https://api.cricapi.com/v1/{endpoint}"
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as http:
-                r = await http.get(url, params={"apikey": key, "offset": 0})
-            results[endpoint] = {"status_code": r.status_code, "body": r.json()}
-        except Exception as e:
-            results[endpoint] = {"error": repr(e)}
+    import httpx, os
+    key_from_settings = settings.CRICAPI_KEY
+    key_from_env = os.environ.get("CRICAPI_KEY", "NOT_FOUND")
+    key = key_from_env if key_from_env != "NOT_FOUND" else key_from_settings
+    results = {
+        "key_from_settings_len": len(key_from_settings),
+        "key_from_env_len": len(key_from_env),
+        "key_from_env_preview": f"{key_from_env[:8]}...{key_from_env[-4:]}" if len(key_from_env) > 8 else key_from_env,
+        "key_used_len": len(key),
+    }
+    url = "https://api.cricapi.com/v1/currentMatches"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params={"apikey": key, "offset": 0})
+        results["api"] = {"status_code": r.status_code, "body": r.json()}
+    except Exception as e:
+        results["api"] = {"error": repr(e)}
     return results
 
 
