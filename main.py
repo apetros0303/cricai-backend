@@ -60,8 +60,8 @@ async def health():
 async def debug_raw():
     import httpx
     key = settings.CRICAPI_KEY
-    results = {}
-    for endpoint in ("currentMatches", "matches"):
+    results = {"key_length": len(key), "key_preview": f"{key[:8]}...{key[-4:]}"}
+    for endpoint in ("currentMatches",):
         url = f"https://api.cricapi.com/v1/{endpoint}"
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
