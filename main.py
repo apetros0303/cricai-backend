@@ -56,29 +56,6 @@ async def health():
     }
 
 
-@app.get("/debug/raw")
-async def debug_raw():
-    import httpx, os
-    key_from_settings = settings.CRICAPI_KEY
-    key_from_env = os.environ.get("CRICAPI_KEY", "NOT_FOUND")
-    key = key_from_env if key_from_env != "NOT_FOUND" else key_from_settings
-    all_keys = [k for k in os.environ.keys() if "CRIC" in k.upper() or "ANTHRO" in k.upper() or "SECRET" in k.upper() or "ENVIRON" in k.upper()]
-    results = {
-        "key_from_settings_len": len(key_from_settings),
-        "key_from_env_len": len(key_from_env),
-        "key_from_env_preview": f"{key_from_env[:8]}...{key_from_env[-4:]}" if len(key_from_env) > 8 else key_from_env,
-        "matching_env_keys": all_keys,
-    }
-    url = "https://api.cricapi.com/v1/currentMatches"
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            r = await http.get(url, params={"apikey": key, "offset": 0})
-        results["api"] = {"status_code": r.status_code, "body": r.json()}
-    except Exception as e:
-        results["api"] = {"error": repr(e)}
-    return results
-
-
 @app.get("/")
 async def root():
     return {"message": "CricAI API", "docs": "/docs"}
