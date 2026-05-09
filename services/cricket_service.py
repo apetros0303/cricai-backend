@@ -37,18 +37,32 @@ _FORMAT_MAP = {
 }
 
 _STATUS_MAP = {
-    "match not started": MatchStatus.SCHEDULED,
-    "not started": MatchStatus.SCHEDULED,
-    "toss": MatchStatus.SCHEDULED,
-    "in progress": MatchStatus.LIVE,
-    "live": MatchStatus.LIVE,
-    "1st innings": MatchStatus.LIVE,
-    "2nd innings": MatchStatus.LIVE,
+    # Finished — check before LIVE so "won by" beats generic substring matches
+    "won by": MatchStatus.FINISHED,
+    "wins by": MatchStatus.FINISHED,
+    "win by": MatchStatus.FINISHED,
+    "no result": MatchStatus.FINISHED,
     "complete": MatchStatus.FINISHED,
     "finished": MatchStatus.FINISHED,
     "abandoned": MatchStatus.CANCELLED,
     "cancelled": MatchStatus.CANCELLED,
+    # Live — broad coverage of CricAPI status strings
+    "in progress": MatchStatus.LIVE,
+    "live": MatchStatus.LIVE,
+    "innings": MatchStatus.LIVE,   # covers "1st innings", "2nd innings", "4th innings"
+    "batting": MatchStatus.LIVE,
+    "bowling": MatchStatus.LIVE,
+    "opt to bat": MatchStatus.LIVE,
+    "elected to bat": MatchStatus.LIVE,
+    "elected to field": MatchStatus.LIVE,
+    " ov)": MatchStatus.LIVE,      # score lines like "145/4 (15.2 ov)"
+    " ov ": MatchStatus.LIVE,
     "rain": MatchStatus.RAIN_DELAY,
+    # Scheduled
+    "match not started": MatchStatus.SCHEDULED,
+    "not started": MatchStatus.SCHEDULED,
+    "match starts": MatchStatus.SCHEDULED,
+    "toss": MatchStatus.SCHEDULED,
 }
 
 
@@ -146,21 +160,27 @@ class CricketService:
             return None
 
     async def get_upcoming_matches(self, series_id: str | None = None) -> list[CricketMatch]:
-        """Fetch upcoming + in-progress matches from both endpoints, deduped.
-        Filters out finished/cancelled matches and matches that started >3 hours ago."""
-        raw_list: list[dict] = []
-        for fetch in (self.client.get_current_matches, self.client.get_matches):
-            try:
-                raw_list.extend(await fetch())
-            except Exception as e:
-                logger.warning(f"Match fetch failed ({fetch.__name__}): {e}")
+        """Fetch upcoming + in-progress matches from both endpoints, deduped."""
+        # currentMatches = live/in-progress; matches = scheduled upcoming
+        current_raw: list[dict] = []
+        scheduled_raw: list[dict] = []
+        try:
+            current_raw = await self.client.get_current_matches()
+        except Exception as e:
+            logger.warning(f"currentMatches fetch failed: {e}")
+        try:
+            scheduled_raw = await self.client.get_matches()
+        except Exception as e:
+            logger.warning(f"matches fetch failed: {e}")
 
         now_utc = datetime.utcnow()
         cutoff = now_utc - timedelta(hours=3)
 
         seen: set[str] = set()
         matches: list[CricketMatch] = []
-        for raw in raw_list:
+
+        # Process current matches — never drop by stale-scheduled rule (they're live)
+        for raw in current_raw:
             mid = raw.get("id", "")
             if mid in seen:
                 continue
@@ -168,15 +188,30 @@ class CricketService:
             m = self._build_match(raw)
             if not m:
                 continue
-            # Drop finished / cancelled matches
             if m.status in (MatchStatus.FINISHED, MatchStatus.CANCELLED):
                 continue
-            # Drop stale scheduled matches (started >3 h ago but not marked live)
+            if series_id and m.series_id != series_id:
+                continue
+            matches.append(m)
+
+        # Process upcoming scheduled matches
+        for raw in scheduled_raw:
+            mid = raw.get("id", "")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            m = self._build_match(raw)
+            if not m:
+                continue
+            if m.status in (MatchStatus.FINISHED, MatchStatus.CANCELLED):
+                continue
+            # Drop stale scheduled matches (started >3h ago but still showing as scheduled)
             if m.status == MatchStatus.SCHEDULED and m.match_start_utc < cutoff:
                 continue
             if series_id and m.series_id != series_id:
                 continue
             matches.append(m)
+
         return matches
 
     async def get_live_matches(self) -> list[CricketMatch]:
