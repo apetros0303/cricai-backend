@@ -13,16 +13,20 @@ settings = get_settings()
 @router.get("/debug/raw")
 async def debug_raw_matches():
     """Returns raw API response for debugging. Remove before production."""
+    import traceback
+    import httpx
+    from config.settings import get_settings as _gs
+    s = _gs()
+    result = {"base_url": s.CRICAPI_BASE_URL, "key_prefix": s.CRICAPI_KEY[:8] if s.CRICAPI_KEY else "MISSING"}
     client = CricApiClient()
-    result = {}
     try:
         result["currentMatches"] = await client.get_current_matches()
     except Exception as e:
-        result["currentMatches_error"] = str(e)
+        result["currentMatches_error"] = traceback.format_exc()
     try:
         result["matches"] = await client.get_matches()
     except Exception as e:
-        result["matches_error"] = str(e)
+        result["matches_error"] = traceback.format_exc()
     return result
 
 
