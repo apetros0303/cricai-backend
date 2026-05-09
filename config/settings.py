@@ -10,10 +10,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change_me"
     ENVIRONMENT: str = "development"
 
-    CRICAPI_BASE_URL: str = "https://api.cricapi.com/v1"
+    CRICAPI_BASE_URL: str = "https://api.cricketdata.org/v1"
 
-    # S plan default: 2000/day. Set to 10000 in .env if on M plan.
-    CRICAPI_DAILY_LIMIT: int = 2000
+    # Paid plan: 10000/day. Free tier: 100/day.
+    CRICAPI_DAILY_LIMIT: int = 10000
 
     FREE_AI_TIPS_PER_DAY: int = 3
 
