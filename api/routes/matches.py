@@ -2,11 +2,28 @@ import logging
 from fastapi import APIRouter, Query, HTTPException
 from models.match import CricketMatch
 from services.cricket_service import CricketService
+from services.cricapi_client import CricApiClient
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/matches", tags=["Matches"])
 settings = get_settings()
+
+
+@router.get("/debug/raw")
+async def debug_raw_matches():
+    """Returns raw API response for debugging. Remove before production."""
+    client = CricApiClient()
+    result = {}
+    try:
+        result["currentMatches"] = await client.get_current_matches()
+    except Exception as e:
+        result["currentMatches_error"] = str(e)
+    try:
+        result["matches"] = await client.get_matches()
+    except Exception as e:
+        result["matches_error"] = str(e)
+    return result
 
 
 @router.get("/live", response_model=list[CricketMatch])
