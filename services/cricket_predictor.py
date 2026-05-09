@@ -22,6 +22,101 @@ settings = get_settings()
 
 
 # ---------------------------------------------------------------------------
+# ICC team strength table (used when no real scorecard data available)
+# Scores range 0.0 (weakest) to 1.0 (strongest). Strength 0.50 = benchmark.
+# Based on ICC T20I/ODI rankings May 2025 + franchise team estimates.
+# ---------------------------------------------------------------------------
+
+_ICC_STRENGTH: dict[str, float] = {
+    # Full ICC members — top tier
+    "india": 0.90,
+    "england": 0.82,
+    "australia": 0.80,
+    "south africa": 0.78,
+    "pakistan": 0.76,
+    "new zealand": 0.74,
+    "west indies": 0.70,
+    "afghanistan": 0.68,
+    "sri lanka": 0.66,
+    "bangladesh": 0.62,
+    # Associate / emerging nations
+    "zimbabwe": 0.54,
+    "ireland": 0.53,
+    "scotland": 0.51,
+    "netherlands": 0.50,
+    "namibia": 0.48,
+    "nepal": 0.47,
+    "oman": 0.46,
+    "uae": 0.45,
+    "united arab emirates": 0.45,
+    "canada": 0.44,
+    "usa": 0.44,
+    "united states": 0.44,
+    "kenya": 0.43,
+    "hong kong": 0.45,
+    "malaysia": 0.42,
+    "indonesia": 0.38,
+    "china": 0.38,
+    "guernsey": 0.42,
+    "isle of man": 0.41,
+    "germany": 0.40,
+    "austria": 0.39,
+    "greece": 0.35,
+    "cyprus": 0.34,
+    # IPL franchises
+    "mumbai indians": 0.72,
+    "chennai super kings": 0.72,
+    "kolkata knight riders": 0.70,
+    "royal challengers bangalore": 0.68,
+    "royal challengers bengaluru": 0.68,
+    "sunrisers hyderabad": 0.67,
+    "delhi capitals": 0.66,
+    "rajasthan royals": 0.65,
+    "punjab kings": 0.63,
+    "lucknow super giants": 0.64,
+    "gujarat titans": 0.64,
+    # PSL franchises
+    "karachi kings": 0.66,
+    "lahore qalandars": 0.67,
+    "peshawar zalmi": 0.64,
+    "islamabad united": 0.65,
+    "multan sultans": 0.65,
+    "quetta gladiators": 0.63,
+    # BBL franchises
+    "sydney sixers": 0.64,
+    "perth scorchers": 0.65,
+    "melbourne stars": 0.62,
+    "melbourne renegades": 0.60,
+    "sydney thunder": 0.61,
+    "hobart hurricanes": 0.62,
+    "adelaide strikers": 0.63,
+    "brisbane heat": 0.61,
+}
+
+
+def _team_strength(team_name: str) -> float:
+    """Look up ICC/franchise strength index. Defaults to 0.50 for unknown teams."""
+    name_lower = team_name.lower()
+    for key, strength in _ICC_STRENGTH.items():
+        if key in name_lower or name_lower in key:
+            return strength
+    return 0.50
+
+
+def _synthetic_run_rates(team_name: str, bench: float) -> tuple[float, float]:
+    """
+    Generate synthetic avg_scored and avg_conceded from ICC rankings
+    when real scorecard data is unavailable.
+    Strength 0.5 maps to the venue benchmark. 1.0 = 25% above, 0.0 = 25% below.
+    """
+    strength = _team_strength(team_name)
+    offset = 0.28 * (2 * strength - 1)  # -0.28 to +0.28
+    avg_scored = bench * (1.0 + offset)
+    avg_conceded = bench * (1.0 - offset)
+    return avg_scored, avg_conceded
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
@@ -174,10 +269,17 @@ class T20PredictionEngine:
         dew = venue.dew_factor if venue else False
 
         # --- Win probabilities ---
-        t1_avg_scored = team1_form.avg_runs_scored or bench
-        t1_avg_conceded = team1_form.avg_runs_conceded or bench
-        t2_avg_scored = team2_form.avg_runs_scored or bench
-        t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        if team1_form.avg_runs_scored:
+            t1_avg_scored = team1_form.avg_runs_scored
+            t1_avg_conceded = team1_form.avg_runs_conceded or bench
+        else:
+            t1_avg_scored, t1_avg_conceded = _synthetic_run_rates(team1, bench)
+
+        if team2_form.avg_runs_scored:
+            t2_avg_scored = team2_form.avg_runs_scored
+            t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        else:
+            t2_avg_scored, t2_avg_conceded = _synthetic_run_rates(team2, bench)
 
         t1_win, t2_win = _win_prob_from_run_rates(
             t1_avg_scored, t1_avg_conceded, t2_avg_scored, t2_avg_conceded, bench
@@ -305,10 +407,17 @@ class ODIPredictionEngine:
         bench = (venue.avg_first_innings_score_odi if venue else self.VENUE_BENCHMARK)
         dew = venue.dew_factor if venue else False
 
-        t1_avg_scored = team1_form.avg_runs_scored or bench
-        t1_avg_conceded = team1_form.avg_runs_conceded or bench
-        t2_avg_scored = team2_form.avg_runs_scored or bench
-        t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        if team1_form.avg_runs_scored:
+            t1_avg_scored = team1_form.avg_runs_scored
+            t1_avg_conceded = team1_form.avg_runs_conceded or bench
+        else:
+            t1_avg_scored, t1_avg_conceded = _synthetic_run_rates(team1, bench)
+
+        if team2_form.avg_runs_scored:
+            t2_avg_scored = team2_form.avg_runs_scored
+            t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        else:
+            t2_avg_scored, t2_avg_conceded = _synthetic_run_rates(team2, bench)
 
         t1_win, t2_win = _win_prob_from_run_rates(
             t1_avg_scored, t1_avg_conceded, t2_avg_scored, t2_avg_conceded, bench
@@ -422,10 +531,17 @@ class TestPredictionEngine:
     ) -> CricketPrediction:
         bench = (venue.avg_first_innings_score_test if venue else self.VENUE_BENCHMARK)
 
-        t1_avg_scored = team1_form.avg_runs_scored or bench
-        t1_avg_conceded = team1_form.avg_runs_conceded or bench
-        t2_avg_scored = team2_form.avg_runs_scored or bench
-        t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        if team1_form.avg_runs_scored:
+            t1_avg_scored = team1_form.avg_runs_scored
+            t1_avg_conceded = team1_form.avg_runs_conceded or bench
+        else:
+            t1_avg_scored, t1_avg_conceded = _synthetic_run_rates(team1, bench)
+
+        if team2_form.avg_runs_scored:
+            t2_avg_scored = team2_form.avg_runs_scored
+            t2_avg_conceded = team2_form.avg_runs_conceded or bench
+        else:
+            t2_avg_scored, t2_avg_conceded = _synthetic_run_rates(team2, bench)
 
         raw_t1_win, raw_t2_win = _win_prob_from_run_rates(
             t1_avg_scored, t1_avg_conceded, t2_avg_scored, t2_avg_conceded, bench

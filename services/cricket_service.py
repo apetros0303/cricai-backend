@@ -4,7 +4,7 @@ Acts as the translation layer between the external API and our prediction engine
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from models.match import (
     CricketMatch, CricketFormat, MatchStatus, TeamInfo, VenueStats,
     TeamBattingForm, HeadToHead, PlayerForm
@@ -12,6 +12,17 @@ from models.match import (
 from services.cricapi_client import CricApiClient
 
 logger = logging.getLogger(__name__)
+
+# Maps the fake placeholder UUIDs in settings to series name search patterns.
+# When CricAPI series_info fails, we fall back to searching upcoming matches by name.
+_SERIES_NAME_PATTERNS: dict[str, list[str]] = {
+    "d5a498c8-7596-4b93-8ab0-e0efc3345312": ["ipl", "indian premier league", "indian premier"],
+    "3e1e7a33-b944-44c4-9beb-d0da55fa95bc": ["psl", "pakistan super league"],
+    "a5c5e6f8-1b34-4c78-8fe2-d1d34a5f6612": ["big bash", "bbl"],
+    "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a": ["t20 world cup", "icc men's t20"],
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890": ["odi world cup", "icc men's cricket world cup"],
+    "b2c3d4e5-f6a7-8901-bcde-f12345678901": ["world test championship", "wtc"],
+}
 
 _FORMAT_MAP = {
     "t20": CricketFormat.T20,
@@ -102,6 +113,16 @@ class CricketService:
             score_list = raw.get("score", [])
             live1 = score_list[0].get("r", "") if len(score_list) > 0 else None
             live2 = score_list[1].get("r", "") if len(score_list) > 1 else None
+            # Current over comes from the most recent innings entry
+            current_over: float | None = None
+            for sc in reversed(score_list):
+                o = sc.get("o")
+                if o is not None:
+                    try:
+                        current_over = float(o)
+                        break
+                    except (ValueError, TypeError):
+                        pass
 
             return CricketMatch(
                 id=raw.get("id", ""),
@@ -116,6 +137,7 @@ class CricketService:
                 status=_parse_status(raw.get("status", "")),
                 live_score_team1=str(live1) if live1 else None,
                 live_score_team2=str(live2) if live2 else None,
+                live_current_over=current_over,
                 toss_winner=raw.get("tossWinner"),
                 toss_decision=raw.get("tossChoice"),
             )
@@ -124,13 +146,17 @@ class CricketService:
             return None
 
     async def get_upcoming_matches(self, series_id: str | None = None) -> list[CricketMatch]:
-        """Fetch upcoming + in-progress matches from both endpoints, deduped."""
+        """Fetch upcoming + in-progress matches from both endpoints, deduped.
+        Filters out finished/cancelled matches and matches that started >3 hours ago."""
         raw_list: list[dict] = []
         for fetch in (self.client.get_current_matches, self.client.get_matches):
             try:
                 raw_list.extend(await fetch())
             except Exception as e:
                 logger.warning(f"Match fetch failed ({fetch.__name__}): {e}")
+
+        now_utc = datetime.utcnow()
+        cutoff = now_utc - timedelta(hours=3)
 
         seen: set[str] = set()
         matches: list[CricketMatch] = []
@@ -140,8 +166,17 @@ class CricketService:
                 continue
             seen.add(mid)
             m = self._build_match(raw)
-            if m and (not series_id or m.series_id == series_id):
-                matches.append(m)
+            if not m:
+                continue
+            # Drop finished / cancelled matches
+            if m.status in (MatchStatus.FINISHED, MatchStatus.CANCELLED):
+                continue
+            # Drop stale scheduled matches (started >3 h ago but not marked live)
+            if m.status == MatchStatus.SCHEDULED and m.match_start_utc < cutoff:
+                continue
+            if series_id and m.series_id != series_id:
+                continue
+            matches.append(m)
         return matches
 
     async def get_live_matches(self) -> list[CricketMatch]:
@@ -153,7 +188,7 @@ class CricketService:
         matches = []
         for raw in raw_list:
             m = self._build_match(raw)
-            if m:
+            if m and m.is_live:
                 matches.append(m)
         return matches
 
@@ -168,17 +203,41 @@ class CricketService:
             return None
 
     async def get_series_matches(self, series_id: str) -> list[CricketMatch]:
+        # Try CricAPI series_info first
+        raw_list: list[dict] = []
         try:
             raw_list = await self.client.get_series_matches(series_id)
         except Exception as e:
-            logger.error(f"Failed to fetch series {series_id}: {e}")
-            return []
-        matches = []
+            logger.warning(f"CricAPI series_info failed for {series_id}: {e}")
+
+        matches: list[CricketMatch] = []
         for raw in raw_list:
             m = self._build_match(raw)
             if m:
                 matches.append(m)
-        return matches
+
+        if matches:
+            return matches
+
+        # Fallback 1: search upcoming feed by series_id field
+        logger.info(f"Falling back to upcoming-feed search for series {series_id}")
+        upcoming = await self.get_upcoming_matches()
+        by_id = [m for m in upcoming if m.series_id == series_id]
+        if by_id:
+            return by_id
+
+        # Fallback 2: name-pattern search (handles placeholder UUIDs in settings)
+        patterns = _SERIES_NAME_PATTERNS.get(series_id, [])
+        if patterns:
+            name_matched = [
+                m for m in upcoming
+                if any(p in m.series_name.lower() or p in m.name.lower() for p in patterns)
+            ]
+            if name_matched:
+                logger.info(f"Found {len(name_matched)} matches via name pattern for {series_id}")
+                return name_matched
+
+        return []
 
     def _extract_innings_runs(self, scorecard: dict, team_name: str) -> tuple[int | None, int | None]:
         """
