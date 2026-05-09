@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change_me"
     ENVIRONMENT: str = "development"
 
-    CRICAPI_BASE_URL: str = "https://api.cricketdata.org/v1"
+    CRICAPI_BASE_URL: str = "https://api.cricapi.com/v1"
 
     # Paid plan: 10000/day. Free tier: 100/day.
     CRICAPI_DAILY_LIMIT: int = 10000
