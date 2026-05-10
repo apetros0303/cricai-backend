@@ -7,9 +7,13 @@ import anthropic
 import logging
 import json
 import re
+from cachetools import TTLCache
 from models.match import TeamBattingForm, HeadToHead, CricketFormat
 from models.prediction import CricketPrediction
 from config.settings import get_settings
+
+# Cache AI analysis per (match_id, language) for 6 hours — analysis is stable within a day
+_ai_cache: TTLCache = TTLCache(maxsize=300, ttl=21600)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +62,7 @@ class CricketAiAnalyst:
     def __init__(self):
         settings = get_settings()
         self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.model = "claude-sonnet-4-6"
+        self.model = "claude-haiku-4-5-20251001"
 
     async def analyze_match(
         self,
@@ -74,6 +78,11 @@ class CricketAiAnalyst:
         venue_notes: str = "",
     ) -> tuple[str, list[str], str]:
         """Returns (analysis_text, key_factors, confidence_label) in the requested language."""
+
+        cache_key = f"{prediction.match_id}:{language}"
+        if cache_key in _ai_cache:
+            logger.debug(f"AI cache hit: {cache_key}")
+            return _ai_cache[cache_key]
 
         lang_instruction = _LANGUAGE_INSTRUCTIONS.get(language, _LANGUAGE_INSTRUCTIONS["en"])
         fmt_label = _FORMAT_LABELS.get(fmt, "Cricket")
@@ -127,18 +136,18 @@ MODEL OUTPUT:
 
 Provide your analysis in the following JSON format (all values in the requested language):
 {{
-  "analysis": "2-3 paragraph expert analysis: team form, pitch conditions, key player matchups, toss impact, and why the prediction makes sense — or where it might be wrong",
-  "key_factors": ["factor 1 (max 12 words)", "factor 2", "factor 3", "factor 4", "factor 5"],
+  "analysis": "Exactly 4 lines. Line 1: current form summary. Line 2: key matchup or pitch factor. Line 3: why the model's pick makes sense. Line 4: main risk or caveat. Be sharp and specific — cite numbers.",
+  "key_factors": ["factor 1 (max 10 words)", "factor 2", "factor 3"],
   "confidence": "Low|Medium|High",
-  "value_assessment": "1 sentence on whether there is betting value in this match"
+  "value_assessment": "1 sentence max on betting value."
 }}
 
-Be specific. Cite the data. Think like a professional analyst covering IPL/PSL for a passionate South Asian cricket audience."""
+Be concise. Every word must add value. Think like a sharp tipster, not a journalist."""
 
         try:
             message = await self.client.messages.create(
                 model=self.model,
-                max_tokens=1000,
+                max_tokens=400,
                 temperature=0.3,
                 system="You are an expert cricket analyst. Always respond with valid JSON only, no extra text.",
                 messages=[{"role": "user", "content": prompt}],
@@ -147,13 +156,15 @@ Be specific. Cite the data. Think like a professional analyst covering IPL/PSL f
             data = _extract_json(raw)
 
             analysis = data.get("analysis", "Analysis unavailable.")
-            factors = data.get("key_factors", [])[:5]
+            factors = data.get("key_factors", [])[:3]
             confidence = data.get("confidence", "Medium")
             value_note = data.get("value_assessment", "")
             if value_note:
                 analysis = f"{analysis}\n\n**{('Value Assessment' if language == 'en' else 'मूल्य आकलन' if language == 'hi' else 'قدر کا جائزہ')}:** {value_note}"
 
-            return analysis, factors, confidence
+            result = (analysis, factors, confidence)
+            _ai_cache[cache_key] = result
+            return result
 
         except json.JSONDecodeError:
             logger.warning(f"Claude returned non-JSON for cricket analysis ({language})")
