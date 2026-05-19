@@ -34,8 +34,14 @@ async def predict_match(
     if not match:
         raise HTTPException(status_code=404, detail=f"Match {match_id} not found")
 
-    # Fetch recent matches for form/H2H derivation
+    # Fetch recent matches for form/H2H derivation.
+    # get_upcoming_matches only returns non-finished matches, so we also pull the
+    # raw paginated feed (offset 0 + 25) which includes recently-finished games.
     recent_all = await svc.get_upcoming_matches()
+    try:
+        recent_all += await svc.get_recent_finished_matches()
+    except Exception as e:
+        logger.warning(f"Recent finished matches fetch failed: {e}")
 
     team1_form = await svc.get_team_form(match.team1.name, recent_all)
     team2_form = await svc.get_team_form(match.team2.name, recent_all)

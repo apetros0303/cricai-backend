@@ -214,6 +214,31 @@ class CricketService:
 
         return matches
 
+    async def get_recent_finished_matches(self) -> list[CricketMatch]:
+        """
+        Fetch the two most-recent pages of the matches feed and return only
+        finished matches. Used to build team form from real scorecard data.
+        Cached via the existing _match_cache so it doesn't cost extra quota.
+        """
+        raw_pages: list[dict] = []
+        for offset in (0, 25):
+            try:
+                raw_pages += await self.client.get_matches(offset=offset)
+            except Exception as e:
+                logger.warning(f"matches fetch at offset {offset} failed: {e}")
+
+        matches: list[CricketMatch] = []
+        seen: set[str] = set()
+        for raw in raw_pages:
+            mid = raw.get("id", "")
+            if mid in seen:
+                continue
+            seen.add(mid)
+            m = self._build_match(raw)
+            if m and m.status == MatchStatus.FINISHED:
+                matches.append(m)
+        return matches
+
     async def get_live_matches(self) -> list[CricketMatch]:
         try:
             raw_list = await self.client.get_current_matches()

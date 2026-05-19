@@ -91,16 +91,67 @@ _ICC_STRENGTH: dict[str, float] = {
     "hobart hurricanes": 0.62,
     "adelaide strikers": 0.63,
     "brisbane heat": 0.61,
+    # LPL (Lanka Premier League)
+    "jaffna kings": 0.64,
+    "colombo strikers": 0.63,
+    "kandy falcons": 0.62,
+    "dambulla sixers": 0.61,
+    "galle titans": 0.60,
+    "colombo stars": 0.63,
+    "kandy tuskers": 0.61,
+    "dambulla giants": 0.61,
+    # CPL (Caribbean Premier League)
+    "trinbago knight riders": 0.67,
+    "barbados royals": 0.65,
+    "guyana amazon warriors": 0.65,
+    "st lucia kings": 0.63,
+    "jamaica tallawahs": 0.63,
+    "st kitts and nevis patriots": 0.62,
+    "st kitts & nevis patriots": 0.62,
+    # SA20
+    "joburg super kings": 0.68,
+    "mi cape town": 0.67,
+    "sunrisers eastern cape": 0.66,
+    "pretoria capitals": 0.65,
+    "durban super giants": 0.65,
+    "paarl royals": 0.64,
+    # ILT20 (UAE)
+    "mi emirates": 0.65,
+    "desert vipers": 0.65,
+    "gulf giants": 0.64,
+    "abu dhabi knight riders": 0.63,
+    "dubai capitals": 0.63,
+    "sharjah warriors": 0.62,
+    # MLC (Major League Cricket)
+    "mi new york": 0.65,
+    "texas super kings": 0.65,
+    "la knight riders": 0.63,
+    "seattle orcas": 0.62,
+    "san francisco unicorns": 0.61,
+    "washington freedom": 0.61,
+    "new york strikers": 0.61,
+    # The Hundred (England)
+    "oval invincibles": 0.64,
+    "southern brave": 0.64,
+    "london spirit": 0.63,
+    "manchester originals": 0.63,
+    "trent rockets": 0.63,
+    "birmingham phoenix": 0.62,
+    "northern superchargers": 0.62,
+    "welsh fire": 0.61,
 }
 
 
 def _team_strength(team_name: str) -> float:
-    """Look up ICC/franchise strength index. Defaults to 0.50 for unknown teams."""
+    """Look up ICC/franchise strength index. Defaults to name-hash-derived value for unknown teams."""
     name_lower = team_name.lower()
     for key, strength in _ICC_STRENGTH.items():
         if key in name_lower or name_lower in key:
             return strength
-    return 0.50
+    # Use a deterministic hash so unknown teams don't all get exactly 50-50.
+    # Range 0.44–0.56 keeps predictions plausible for genuinely unknown teams.
+    h = sum(ord(c) * (i + 1) for i, c in enumerate(name_lower)) % 1000
+    return round(0.44 + (h / 1000) * 0.12, 3)
 
 
 def _synthetic_run_rates(team_name: str, bench: float) -> tuple[float, float]:
