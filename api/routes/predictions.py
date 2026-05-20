@@ -1,10 +1,13 @@
 import logging
-from fastapi import APIRouter, Query, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Query, HTTPException, Header, Request
 from models.prediction import CricketPrediction
-from models.match import TeamBattingForm, HeadToHead, CricketFormat
+from models.match import TeamBattingForm, CricketFormat
 from services.cricket_service import CricketService
 from services.cricket_predictor import get_engine
 from services.cricket_ai_analyst import CricketAiAnalyst
+from services.revenuecat import is_premium_user
+from api.limiter import limiter
 from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -15,18 +18,22 @@ _ai_analyst = CricketAiAnalyst()
 
 
 @router.get("/{match_id}", response_model=CricketPrediction)
+@limiter.limit("20/minute")
 async def predict_match(
+    request: Request,
     match_id: str,
-    premium: bool = Query(default=False, description="Include AI analysis and player predictions"),
     language: str = Query(default="en", description="Language for AI analysis: en, hi, ur"),
+    x_rc_user_id: Optional[str] = Header(default=None),
 ):
     """
     Full prediction for a cricket match.
     - Free: match winner probabilities, total runs O/U, form, H2H
-    - Premium: player predictions (top batsman/bowler), AI analysis (en/hi/ur), value bet
+    - Premium (verified via X-RC-User-ID header): player predictions, AI analysis, value bet
     """
     if language not in ("en", "hi", "ur"):
         raise HTTPException(status_code=400, detail="language must be one of: en, hi, ur")
+
+    premium = await is_premium_user(x_rc_user_id)
 
     svc = CricketService()
 
@@ -47,19 +54,11 @@ async def predict_match(
     team2_form = await svc.get_team_form(match.team2.name, recent_all)
     h2h = await svc.get_head_to_head(match.team1.name, match.team2.name, recent_all)
 
-    # If no form data, use safe defaults so engine still runs
     if team1_form.matches_played == 0:
-        team1_form = TeamBattingForm(
-            team_id=match.team1.id,
-            team_name=match.team1.name,
-        )
+        team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
     if team2_form.matches_played == 0:
-        team2_form = TeamBattingForm(
-            team_id=match.team2.id,
-            team_name=match.team2.name,
-        )
+        team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
 
-    # Squad + player form (paid plan — scorecard access)
     team1_squad, team2_squad = [], []
     if premium:
         try:
@@ -96,7 +95,6 @@ async def predict_match(
 
     prediction.language = language
 
-    # AI analysis (premium only)
     if premium:
         try:
             analysis, factors, ai_conf = await _ai_analyst.analyze_match(
@@ -110,7 +108,7 @@ async def predict_match(
                 prediction=prediction,
                 language=language,
                 venue_notes=(
-                    f"Dew factor expected" if match.venue and match.venue.dew_factor else ""
+                    "Dew factor expected" if match.venue and match.venue.dew_factor else ""
                 ),
             )
             prediction.ai_analysis = analysis
@@ -123,14 +121,18 @@ async def predict_match(
 
 
 @router.get("/bulk/series/{series_id}", response_model=list[CricketPrediction])
+@limiter.limit("10/minute")
 async def predict_series_bulk(
+    request: Request,
     series_id: str,
-    premium: bool = Query(default=False),
     language: str = Query(default="en"),
+    x_rc_user_id: Optional[str] = Header(default=None),
 ):
     """Predictions for all upcoming matches in a series."""
     if language not in ("en", "hi", "ur"):
         raise HTTPException(status_code=400, detail="language must be one of: en, hi, ur")
+
+    premium = await is_premium_user(x_rc_user_id)
 
     svc = CricketService()
     matches = await svc.get_series_matches(series_id)

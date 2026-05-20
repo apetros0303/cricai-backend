@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change_me"
     ENVIRONMENT: str = "development"
 
+    # RevenueCat server-side verification — set to the Secret API Key from RC dashboard
+    REVENUECAT_API_KEY: str = ""
+    REVENUECAT_ENTITLEMENT_ID: str = "Premium"
+
     CRICAPI_BASE_URL: str = "https://api.cricapi.com/v1"
 
     # Paid plan: 10000/day. Free tier: 100/day.
