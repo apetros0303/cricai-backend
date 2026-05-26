@@ -212,6 +212,27 @@ class CricketService:
                 continue
             matches.append(m)
 
+        # If main feed returned nothing and no series filter, enrich from known series fixtures
+        if not matches and series_id is None:
+            for sid in settings.CRICKET_SERIES.values():
+                try:
+                    raw_list = await self.client.get_series_matches(sid)
+                    for raw in raw_list:
+                        mid = raw.get("id", "")
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                        m = self._build_match(raw)
+                        if not m:
+                            continue
+                        if m.status in (MatchStatus.FINISHED, MatchStatus.CANCELLED):
+                            continue
+                        if m.match_start_utc < cutoff:
+                            continue
+                        matches.append(m)
+                except Exception as e:
+                    logger.warning(f"Series fallback fetch failed for {sid}: {e}")
+
         return matches
 
     async def get_recent_finished_matches(self) -> list[CricketMatch]:
