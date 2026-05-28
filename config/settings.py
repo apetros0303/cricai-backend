@@ -21,19 +21,20 @@ class Settings(BaseSettings):
 
     FREE_AI_TIPS_PER_DAY: int = 3
 
-    CURRENT_SEASON: int = 2025
+    CURRENT_SEASON: int = 2026
 
     # Series IDs on CricAPI (update each season)
     CRICKET_SERIES: dict = {
         # T20 leagues
-        "IPL": "d5a498c8-7596-4b93-8ab0-e0efc3345312",
-        "PSL": "3e1e7a33-b944-44c4-9beb-d0da55fa95bc",
-        "Big Bash": "a5c5e6f8-1b34-4c78-8fe2-d1d34a5f6612",
-        # International
-        "ICC T20 World Cup": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a",
-        "ICC ODI World Cup": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "IPL": "87c62aac-bc3c-4738-ab93-19da0690488f",           # Indian Premier League 2026
+        "Big Bash": "4e2f50ed-ed84-46fc-bdcb-ace304b0da34",      # Big Bash League 2025-26
+        "CPL": "929c36f6-9ed6-4cec-a2ad-910a2ee4f701",           # Caribbean Premier League 2026
+        # International T20
+        "ICC T20 World Cup": "5978f057-af70-4dcf-b9ee-04831b8df947",   # ICC Men's T20 WC 2026
+        "ICC Womens T20 WC": "f3e5c7dd-332c-4893-9067-aa2bfe6d2b85",  # ICC Women's T20 WC 2026
         # Test series
-        "ICC World Test Championship": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+        "ICC WTC Final": "e74332ae-5fee-4a43-814a-88ead6909e35",  # ICC WTC Final 2025
+        "The Ashes": "5d6b45ad-3699-4d15-84bc-4acb1dcf4ccd",     # The Ashes 2025-26
     }
 
     # Prediction engine weights
