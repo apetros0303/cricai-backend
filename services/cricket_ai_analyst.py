@@ -13,7 +13,7 @@ from models.prediction import CricketPrediction
 from config.settings import get_settings
 
 # Cache AI analysis per (match_id, language) for 6 hours — analysis is stable within a day
-_ai_cache: TTLCache = TTLCache(maxsize=300, ttl=21600)
+_ai_cache: TTLCache = TTLCache(maxsize=60, ttl=21600)
 
 logger = logging.getLogger(__name__)
 

@@ -13,12 +13,12 @@ from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Shared in-memory caches
-_match_cache: TTLCache = TTLCache(maxsize=300, ttl=3600)       # 1 h
-_scorecard_cache: TTLCache = TTLCache(maxsize=500, ttl=604800) # 7 days — finished scorecards never change
-_series_cache: TTLCache = TTLCache(maxsize=100, ttl=86400)     # 24 h
-_player_cache: TTLCache = TTLCache(maxsize=1000, ttl=3600)     # 1 h
-_live_cache: TTLCache = TTLCache(maxsize=50, ttl=60)           # 1 min for live data
+# Shared in-memory caches — kept small to stay within 512MB Render instance
+_match_cache: TTLCache = TTLCache(maxsize=60, ttl=3600)        # 1 h
+_scorecard_cache: TTLCache = TTLCache(maxsize=80, ttl=604800)  # 7 days — finished scorecards never change
+_series_cache: TTLCache = TTLCache(maxsize=30, ttl=86400)      # 24 h
+_player_cache: TTLCache = TTLCache(maxsize=150, ttl=3600)      # 1 h
+_live_cache: TTLCache = TTLCache(maxsize=20, ttl=60)           # 1 min for live data
 
 _daily_requests: dict = {"count": 0, "date": ""}
 
