@@ -99,6 +99,93 @@ def _parse_datetime(raw: str) -> datetime:
         return datetime.utcnow()
 
 
+# Series name keyword → cricket region.  Checked as substring of series_name.lower().
+_SERIES_REGION: dict[str, str] = {
+    # Indian domestic
+    "ranji": "india", "vijay hazare": "india", "syed mushtaq": "india",
+    "mushtaq ali": "india", "duleep": "india", "tnpl": "india", "ipl": "india",
+    # Australian domestic
+    "sheffield shield": "australia", "big bash": "australia", "marsh cup": "australia",
+    "wncl": "australia",
+    # English domestic
+    "county championship": "england", "t20 blast": "england",
+    "royal london": "england", "one-day cup": "england",
+    # Pakistan domestic
+    "quaid-e-azam": "pakistan", "national t20 cup": "pakistan", "pcb": "pakistan",
+    # South Africa
+    "csa": "south_africa", "momentum": "south_africa", "4-day franchise": "south_africa",
+    # New Zealand
+    "plunket shield": "new_zealand", "ford trophy": "new_zealand",
+    "super smash": "new_zealand",
+    # West Indies / Caribbean
+    "cpl": "west_indies", "regional four": "west_indies",
+    "caribbean premier": "west_indies",
+    # Sri Lanka
+    "lpl": "sri_lanka", "premier league cricket": "sri_lanka",
+    # Bangladesh
+    "bpl": "bangladesh", "bcl": "bangladesh", "dhaka premier": "bangladesh",
+    # Zimbabwe
+    "logan cup": "zimbabwe",
+    # Afghanistan
+    "shpageeza": "afghanistan",
+}
+
+# Batting strength (0-1) by region — used to scale format-specific run benchmarks.
+_REGION_STRENGTH: dict[str, float] = {
+    "australia":    0.72,
+    "india":        0.70,
+    "england":      0.68,
+    "pakistan":     0.66,
+    "south_africa": 0.65,
+    "new_zealand":  0.65,
+    "west_indies":  0.62,
+    "sri_lanka":    0.60,
+    "bangladesh":   0.57,
+    "zimbabwe":     0.52,
+    "afghanistan":  0.58,
+}
+_DEFAULT_STRENGTH = 0.55  # unknown domestic competition
+
+
+def get_regional_form_estimate(
+    team_id: str, team_name: str, series_name: str, fmt: "CricketFormat"
+) -> "TeamBattingForm":
+    """
+    Last-resort form estimate when both scorecard and fantasy data are unavailable.
+    Infers the regional cricket level from series_name, then scales format-specific
+    run benchmarks by that region's batting strength.
+    Returns TeamBattingForm with matches_played=1 (nominal) so the engine has
+    realistic run-rate inputs rather than zeros.
+    """
+    sl = series_name.lower()
+    region = next(
+        (r for keyword, r in _SERIES_REGION.items() if keyword in sl),
+        None,
+    )
+    strength = _REGION_STRENGTH.get(region, _DEFAULT_STRENGTH) if region else _DEFAULT_STRENGTH
+
+    run_bench = {
+        "t20": 160.0, "t10": 100.0, "odi": 265.0, "test": 320.0,
+    }.get(fmt.value if hasattr(fmt, "value") else str(fmt), 160.0)
+
+    # offset shifts scored/conceded symmetrically around the benchmark
+    offset = 0.25 * (2.0 * strength - 1.0)
+    avg_scored    = round(run_bench * (1.0 + offset), 1)
+    avg_conceded  = round(run_bench * (1.0 - offset), 1)
+
+    logger.info(
+        f"Regional form estimate: {team_name} → region={region or 'unknown'} "
+        f"strength={strength:.2f} scored={avg_scored} conceded={avg_conceded}"
+    )
+    return TeamBattingForm(
+        team_id=team_id,
+        team_name=team_name,
+        matches_played=1,
+        avg_runs_scored=avg_scored,
+        avg_runs_conceded=avg_conceded,
+    )
+
+
 def _extract_fantasy_team_stats(data: dict, team_name: str) -> tuple[float, float]:
     """
     Parse a Fantasy Match Points API response and return (batting_pts, bowling_pts)

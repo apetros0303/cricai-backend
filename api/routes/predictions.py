@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Query, HTTPException, Header, Request
 from models.prediction import CricketPrediction
 from models.match import TeamBattingForm, CricketFormat
-from services.cricket_service import CricketService
+from services.cricket_service import CricketService, get_regional_form_estimate
 from services.cricket_predictor import get_engine
 from services.cricket_ai_analyst import CricketAiAnalyst
 from services.revenuecat import is_premium_user
@@ -54,20 +54,28 @@ async def predict_match(
     team2_form = await svc.get_team_form(match.team2.name, recent_all)
     h2h = await svc.get_head_to_head(match.team1.name, match.team2.name, recent_all)
 
-    # When no scorecard data exists (e.g. domestic teams), derive form from fantasy points.
-    # Fantasy data is cached 7 days so repeat calls are free.
+    # Fallback chain when scorecard data is unavailable (domestic/unknown teams):
+    # 1. Fantasy Match Points (real recent performance, 7-day cache)
+    # 2. Regional form estimate (series-name → cricket region → strength-scaled run rates)
+    # 3. Empty form (engine produces Low confidence — last resort only)
     if team1_form.matches_played == 0:
         try:
             team1_form = await svc.get_team_fantasy_form(match.team1.name, recent_all, match.format)
         except Exception as e:
             logger.warning(f"Fantasy form failed for {match.team1.name}: {e}")
-            team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
+        if team1_form.matches_played == 0:
+            team1_form = get_regional_form_estimate(
+                match.team1.id, match.team1.name, match.series_name, match.format
+            )
     if team2_form.matches_played == 0:
         try:
             team2_form = await svc.get_team_fantasy_form(match.team2.name, recent_all, match.format)
         except Exception as e:
             logger.warning(f"Fantasy form failed for {match.team2.name}: {e}")
-            team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
+        if team2_form.matches_played == 0:
+            team2_form = get_regional_form_estimate(
+                match.team2.id, match.team2.name, match.series_name, match.format
+            )
 
     team1_squad, team2_squad = [], []
     if premium:
@@ -162,12 +170,20 @@ async def predict_series_bulk(
                 try:
                     team1_form = await svc.get_team_fantasy_form(match.team1.name, recent_all, match.format)
                 except Exception:
-                    team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
+                    pass
+                if team1_form.matches_played == 0:
+                    team1_form = get_regional_form_estimate(
+                        match.team1.id, match.team1.name, match.series_name, match.format
+                    )
             if team2_form.matches_played == 0:
                 try:
                     team2_form = await svc.get_team_fantasy_form(match.team2.name, recent_all, match.format)
                 except Exception:
-                    team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
+                    pass
+                if team2_form.matches_played == 0:
+                    team2_form = get_regional_form_estimate(
+                        match.team2.id, match.team2.name, match.series_name, match.format
+                    )
 
             engine = get_engine(match.format)
             common = dict(
