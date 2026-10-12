@@ -3,6 +3,7 @@ Parses raw CricAPI responses into our domain models.
 Acts as the translation layer between the external API and our prediction engine.
 """
 
+import re
 import logging
 from datetime import datetime, timezone, timedelta
 from models.match import (
@@ -96,6 +97,45 @@ def _parse_datetime(raw: str) -> datetime:
         return dt.astimezone(timezone.utc).replace(tzinfo=None)
     except Exception:
         return datetime.utcnow()
+
+
+def _extract_fantasy_team_stats(data: dict, team_name: str) -> tuple[float, float]:
+    """
+    Parse a Fantasy Match Points API response and return (batting_pts, bowling_pts)
+    for the given team across all innings.
+
+    Strategy:
+    - When Team A bats in an inning, its players appear in that inning's batting[].
+    - When Team A bowls, its players appear in the OPPONENT's inning bowling[].
+
+    So we sum batting[] from our innings, and bowling[] from opponent innings.
+    """
+    team_clean = re.sub(r'\s*\[.*?\]', '', team_name).strip().lower()
+    innings = data.get("innings", [])
+    batting_total = 0.0
+    bowling_total = 0.0
+
+    for inning in innings:
+        label = inning.get("inning", "")
+        # Extract batting team name from e.g. "Bihar Inning 1" → "bihar"
+        inning_team = re.sub(r'\s+[Ii]nning\s+\d+.*$', '', label).strip().lower()
+        inning_team = re.sub(r'\s*\[.*?\]', '', inning_team).strip()
+
+        is_our_batting = (
+            team_clean in inning_team
+            or inning_team in team_clean
+            or any(w in inning_team for w in team_clean.split() if len(w) > 3)
+        )
+
+        if is_our_batting:
+            for p in inning.get("batting", []):
+                batting_total += p.get("points", 0)
+        else:
+            # Opponent bats → our bowlers are credited in this inning's bowling[]
+            for p in inning.get("bowling", []):
+                bowling_total += max(0.0, p.get("points", 0))
+
+    return batting_total, bowling_total
 
 
 class CricketService:
@@ -441,6 +481,95 @@ class CricketService:
             avg_runs_scored=round(sum(scores_batting) / len(scores_batting), 1) if scores_batting else 0.0,
             avg_runs_conceded=round(sum(scores_bowling) / len(scores_bowling), 1) if scores_bowling else 0.0,
             last_5=last_5[-5:],
+        )
+
+    async def get_team_fantasy_form(
+        self,
+        team_name: str,
+        recent_matches: list[CricketMatch],
+        fmt: CricketFormat = CricketFormat.T20,
+        last_n: int = 5,
+    ) -> TeamBattingForm:
+        """
+        Build TeamBattingForm from Fantasy Match Points across recent finished matches.
+        Used as fallback when no scorecard data is available (e.g. all domestic teams).
+
+        Converts per-match batting/bowling fantasy points into avg_runs_scored /
+        avg_runs_conceded using format-specific benchmarks, so the existing prediction
+        engine receives properly scaled run-rate inputs.
+        """
+        team_clean = re.sub(r'\s*\[.*?\]', '', team_name).strip().lower()
+
+        relevant = [
+            m for m in recent_matches
+            if m.status == MatchStatus.FINISHED
+            and (
+                team_clean in re.sub(r'\s*\[.*?\]', '', m.name).lower()
+                or team_clean in re.sub(r'\s*\[.*?\]', '', m.team1.name).lower()
+                or team_clean in re.sub(r'\s*\[.*?\]', '', m.team2.name).lower()
+            )
+        ][:last_n]
+
+        if not relevant:
+            return TeamBattingForm(team_id=team_name, team_name=team_name)
+
+        # Fantasy points benchmarks — "average team" performance per innings
+        bat_bench = {
+            CricketFormat.T20: 90.0, CricketFormat.T10: 60.0,
+            CricketFormat.ODI: 130.0, CricketFormat.TEST: 160.0,
+        }.get(fmt, 90.0)
+        bowl_bench = {
+            CricketFormat.T20: 70.0, CricketFormat.T10: 50.0,
+            CricketFormat.ODI: 100.0, CricketFormat.TEST: 130.0,
+        }.get(fmt, 70.0)
+        # Venue run benchmark for converting strength → run rates
+        run_bench = {
+            CricketFormat.T20: 160.0, CricketFormat.T10: 100.0,
+            CricketFormat.ODI: 265.0, CricketFormat.TEST: 320.0,
+        }.get(fmt, 160.0)
+
+        batting_scores: list[float] = []
+        bowling_scores: list[float] = []
+
+        for match in relevant:
+            try:
+                data = await self.client.get_fantasy_match_points(match.id)
+                if not data:
+                    continue
+                bat_pts, bowl_pts = _extract_fantasy_team_stats(data, team_name)
+                if bat_pts != 0 or bowl_pts != 0:
+                    batting_scores.append(bat_pts)
+                    bowling_scores.append(bowl_pts)
+            except Exception as e:
+                logger.warning(f"Fantasy form fetch failed for {match.id} ({team_name}): {e}")
+
+        if not batting_scores:
+            return TeamBattingForm(team_id=team_name, team_name=team_name)
+
+        avg_bat = sum(batting_scores) / len(batting_scores)
+        avg_bowl = sum(bowling_scores) / len(bowling_scores) if bowling_scores else bowl_bench
+
+        # Normalise to 0.2–0.9: pts/(2*benchmark) maps benchmark → 0.5
+        bat_str = max(0.2, min(0.9, avg_bat / (2.0 * bat_bench)))
+        bowl_str = max(0.2, min(0.9, avg_bowl / (2.0 * bowl_bench)))
+
+        # Combine: batting 60%, bowling 40% (mirrors how cricket is won)
+        combined = 0.60 * bat_str + 0.40 * bowl_str
+        offset = 0.28 * (2.0 * combined - 1.0)
+        avg_runs_scored = round(run_bench * (1.0 + offset), 1)
+        avg_runs_conceded = round(run_bench * (1.0 - offset), 1)
+
+        logger.info(
+            f"Fantasy form {team_name} ({len(batting_scores)}m): "
+            f"bat={avg_bat:.0f}→{avg_runs_scored} conceded={avg_runs_conceded}"
+        )
+
+        return TeamBattingForm(
+            team_id=team_name,
+            team_name=team_name,
+            matches_played=len(batting_scores),
+            avg_runs_scored=avg_runs_scored,
+            avg_runs_conceded=avg_runs_conceded,
         )
 
     async def get_head_to_head(

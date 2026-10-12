@@ -54,10 +54,20 @@ async def predict_match(
     team2_form = await svc.get_team_form(match.team2.name, recent_all)
     h2h = await svc.get_head_to_head(match.team1.name, match.team2.name, recent_all)
 
+    # When no scorecard data exists (e.g. domestic teams), derive form from fantasy points.
+    # Fantasy data is cached 7 days so repeat calls are free.
     if team1_form.matches_played == 0:
-        team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
+        try:
+            team1_form = await svc.get_team_fantasy_form(match.team1.name, recent_all, match.format)
+        except Exception as e:
+            logger.warning(f"Fantasy form failed for {match.team1.name}: {e}")
+            team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
     if team2_form.matches_played == 0:
-        team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
+        try:
+            team2_form = await svc.get_team_fantasy_form(match.team2.name, recent_all, match.format)
+        except Exception as e:
+            logger.warning(f"Fantasy form failed for {match.team2.name}: {e}")
+            team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
 
     team1_squad, team2_squad = [], []
     if premium:
@@ -149,9 +159,15 @@ async def predict_series_bulk(
             h2h = await svc.get_head_to_head(match.team1.name, match.team2.name, recent_all)
 
             if team1_form.matches_played == 0:
-                team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
+                try:
+                    team1_form = await svc.get_team_fantasy_form(match.team1.name, recent_all, match.format)
+                except Exception:
+                    team1_form = TeamBattingForm(team_id=match.team1.id, team_name=match.team1.name)
             if team2_form.matches_played == 0:
-                team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
+                try:
+                    team2_form = await svc.get_team_fantasy_form(match.team2.name, recent_all, match.format)
+                except Exception:
+                    team2_form = TeamBattingForm(team_id=match.team2.id, team_name=match.team2.name)
 
             engine = get_engine(match.format)
             common = dict(

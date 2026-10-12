@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # Shared in-memory caches — kept small to stay within 512MB Render instance
 _match_cache: TTLCache = TTLCache(maxsize=60, ttl=3600)        # 1 h
 _scorecard_cache: TTLCache = TTLCache(maxsize=80, ttl=604800)  # 7 days — finished scorecards never change
+_fantasy_cache: TTLCache = TTLCache(maxsize=120, ttl=604800)   # 7 days — fantasy points for finished matches never change
 _series_cache: TTLCache = TTLCache(maxsize=30, ttl=86400)      # 24 h
 _player_cache: TTLCache = TTLCache(maxsize=150, ttl=3600)      # 1 h
 _live_cache: TTLCache = TTLCache(maxsize=20, ttl=60)           # 1 min for live data
@@ -141,6 +142,22 @@ class CricApiClient:
         result = data.get("data")
         if result:
             _player_cache[cache_key] = result
+        return result
+
+    async def get_fantasy_match_points(self, match_id: str) -> dict | None:
+        """
+        Fantasy Match Points for a finished match — batting/bowling/catching pts per player.
+        Cached for 7 days (finished match data is immutable).
+        Endpoint: match_points?id=<match_id>
+        """
+        cache_key = f"fantasy:{match_id}"
+        if cache_key in _fantasy_cache:
+            logger.debug(f"Fantasy cache hit: {match_id}")
+            return _fantasy_cache[cache_key]
+        data = await self._get("match_points", {"id": match_id})
+        result = data.get("data")
+        if result:
+            _fantasy_cache[cache_key] = result
         return result
 
     async def search_players(self, name: str) -> list[dict]:
