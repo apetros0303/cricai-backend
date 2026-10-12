@@ -138,9 +138,14 @@ class CricketService:
                     except (ValueError, TypeError):
                         pass
 
+            raw_status = raw.get("status", "")
+            # Live score: try score[] array (matchInfo format) then t1s/t2s (currentMatches format)
+            live_s1 = str(live1) if live1 else (raw.get("t1s") or None)
+            live_s2 = str(live2) if live2 else (raw.get("t2s") or None)
+
             return CricketMatch(
                 id=raw.get("id", ""),
-                name=raw.get("name", ""),
+                name=raw.get("name", "") or f"{raw.get('t1','')} vs {raw.get('t2','')}",
                 team1=team1,
                 team2=team2,
                 match_start_utc=_parse_datetime(raw.get("dateTimeGMT", "")),
@@ -148,10 +153,11 @@ class CricketService:
                 series_name=raw.get("series", raw.get("name", "")),
                 format=_parse_format(raw.get("matchType", ""), raw.get("name", "")),
                 venue=venue,
-                status=_parse_status(raw.get("status", "")),
-                live_score_team1=str(live1) if live1 else None,
-                live_score_team2=str(live2) if live2 else None,
+                status=_parse_status(raw_status),
+                live_score_team1=live_s1,
+                live_score_team2=live_s2,
                 live_current_over=current_over,
+                live_status_text=raw_status if raw_status else None,
                 toss_winner=raw.get("tossWinner"),
                 toss_decision=raw.get("tossChoice"),
             )

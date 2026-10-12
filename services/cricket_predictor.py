@@ -10,6 +10,7 @@ All models output a CricketPrediction with win probabilities, total runs O/U,
 and optional player predictions.
 """
 
+import re
 import numpy as np
 from datetime import datetime
 from models.match import (
@@ -228,6 +229,101 @@ def _pick_confidence(best_prob: float, n_outcomes: int = 2) -> float:
     fair = 1.0 / n_outcomes
     edge = max(0.0, best_prob - fair)
     return round(max(0.0, min(1.0, edge * 6.0)), 4)
+
+
+def _deficit_to_win_prob(deficit: int) -> float:
+    """Map run deficit/lead to win probability for the leading team (Test cricket)."""
+    if deficit >= 400: return 0.92
+    if deficit >= 300: return 0.87
+    if deficit >= 200: return 0.80
+    if deficit >= 150: return 0.74
+    if deficit >= 100: return 0.67
+    if deficit >= 75:  return 0.63
+    return 0.59  # 60-74: clear advantage, still Medium confidence
+
+
+def _needed_to_win_prob(runs_needed: int) -> float:
+    """Defending team win prob when chasing team still needs N runs (4th innings)."""
+    if runs_needed >= 400: return 0.93
+    if runs_needed >= 300: return 0.87
+    if runs_needed >= 200: return 0.78
+    if runs_needed >= 150: return 0.70
+    if runs_needed >= 100: return 0.63
+    return 0.57
+
+
+def _parse_live_test_situation(
+    status: str,
+    team1: str,
+    team2: str,
+) -> tuple[str, float] | None:
+    """
+    Parse a CricAPI live Test status string (e.g. "Day 2: Stumps - Bihar trail by 496 runs")
+    into a (bet_label, win_probability) tuple, or None if margin is too close to call.
+    Uses the match situation to override the pre-match probability model.
+    """
+    if not status:
+        return None
+
+    # Strip [abbreviation] from team names for matching
+    t1_clean = re.sub(r'\s*\[.*?\]', '', team1).strip()
+    t2_clean = re.sub(r'\s*\[.*?\]', '', team2).strip()
+    t1_lower = t1_clean.lower()
+    t2_lower = t2_clean.lower()
+
+    # Isolate the situation clause after the last " - "
+    # e.g. "Day 2: Stumps - Bihar trail by 496 runs" → "bihar trail by 496 runs"
+    situation = status.split(' - ')[-1].strip().lower()
+
+    def _matches(frag: str, t_lower: str) -> bool:
+        return frag in t_lower or t_lower in frag
+
+    # "X trail by N runs" → leading team is the strong favourite
+    m = re.match(r'(.+?)\s+trails?\s+by\s+(\d+)\s+runs?', situation)
+    if m:
+        trailing_frag = m.group(1).strip()
+        deficit = int(m.group(2))
+        if deficit < 60:
+            return None
+        if _matches(trailing_frag, t1_lower):
+            leading = t2_clean
+        elif _matches(trailing_frag, t2_lower):
+            leading = t1_clean
+        else:
+            return None
+        return f"{leading} to Win", _deficit_to_win_prob(deficit)
+
+    # "X lead/leads by N runs"
+    m = re.match(r'(.+?)\s+leads?\s+by\s+(\d+)\s+runs?', situation)
+    if m:
+        leading_frag = m.group(1).strip()
+        lead = int(m.group(2))
+        if lead < 60:
+            return None
+        if _matches(leading_frag, t1_lower):
+            leading = t1_clean
+        elif _matches(leading_frag, t2_lower):
+            leading = t2_clean
+        else:
+            return None
+        return f"{leading} to Win", _deficit_to_win_prob(lead)
+
+    # "X need/needs N runs" (4th innings chase — defending team wins if N is high)
+    m = re.match(r'(.+?)\s+needs?\s+(\d+)\s+runs?', situation)
+    if m:
+        chasing_frag = m.group(1).strip()
+        runs_needed = int(m.group(2))
+        if runs_needed < 60:
+            return None
+        if _matches(chasing_frag, t1_lower):
+            defending = t2_clean
+        elif _matches(chasing_frag, t2_lower):
+            defending = t1_clean
+        else:
+            return None
+        return f"{defending} to Win", _needed_to_win_prob(runs_needed)
+
+    return None
 
 
 def _value_bet(probability: float) -> tuple[bool, float]:
@@ -606,6 +702,7 @@ class TestPredictionEngine:
         venue: VenueStats | None = None,
         team1_squad: list[PlayerForm] | None = None,
         team2_squad: list[PlayerForm] | None = None,
+        live_status_text: str | None = None,
     ) -> CricketPrediction:
         bench = (venue.avg_first_innings_score_test if venue else self.VENUE_BENCHMARK)
 
@@ -662,6 +759,17 @@ class TestPredictionEngine:
         )
 
         confidence = _pick_confidence(best_prob, n_outcomes)
+
+        # Live match override: if the in-game situation gives a clearer signal than
+        # the pre-match model, use it. Treat as 2-way market (win vs draw/lose).
+        if live_status_text:
+            live_result = _parse_live_test_situation(live_status_text, team1, team2)
+            if live_result:
+                live_bet, live_prob = live_result
+                bet = live_bet
+                market = "Match Winner"
+                best_prob = live_prob
+                confidence = _pick_confidence(live_prob, 2)
 
         is_value, ev = _value_bet(best_prob)
 

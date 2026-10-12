@@ -85,7 +85,7 @@ async def predict_match(
     )
 
     if match.format == CricketFormat.TEST:
-        prediction = engine.predict(**common)
+        prediction = engine.predict(**common, live_status_text=match.live_status_text)
     else:
         prediction = engine.predict(
             **common,
@@ -169,7 +169,7 @@ async def predict_series_bulk(
             )
 
             if match.format == CricketFormat.TEST:
-                pred = engine.predict(**common)
+                pred = engine.predict(**common, live_status_text=match.live_status_text)
             else:
                 pred = engine.predict(**common, toss_winner=match.toss_winner, toss_decision=match.toss_decision)
 

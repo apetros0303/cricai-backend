@@ -145,5 +145,6 @@ class CricketMatch(BaseModel):
     live_score_team2: Optional[str] = None
     live_current_over: Optional[float] = None
     live_batting_team: Optional[str] = None
+    live_status_text: Optional[str] = None   # raw CricAPI status, e.g. "Bihar trail by 496 runs"
     toss_winner: Optional[str] = None
     toss_decision: Optional[str] = None      # "bat" / "field"
