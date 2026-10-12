@@ -172,11 +172,53 @@ def _synthetic_run_rates(team_name: str, bench: float) -> tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 def _confidence_label(score: float) -> str:
-    if score >= 0.70:
+    if score >= 0.65:
         return "High"
-    if score >= 0.52:
+    if score >= 0.42:
         return "Medium"
     return "Low"
+
+
+def _best_pick(
+    team1: str,
+    team2: str,
+    t1_win: float,
+    t2_win: float,
+    over_prob: float,
+    runs_line: float,
+    draw_prob: float = 0.0,
+) -> tuple[str, str, float]:
+    """Pick the highest-probability option across all available markets."""
+    candidates: list[tuple[float, str, str]] = [
+        (t1_win, f"{team1} to Win", "Match Winner"),
+        (t2_win, f"{team2} to Win", "Match Winner"),
+    ]
+    if draw_prob >= 0.20:
+        candidates.append((draw_prob, "Draw", "Match Winner"))
+
+    under_prob = 1.0 - over_prob
+    if over_prob >= under_prob:
+        candidates.append((over_prob, f"Over {int(runs_line)} Runs", "Total Runs"))
+    else:
+        candidates.append((under_prob, f"Under {int(runs_line)} Runs", "Total Runs"))
+
+    best_prob, bet, market = max(candidates, key=lambda x: x[0])
+    return bet, market, round(best_prob, 4)
+
+
+def _pick_confidence(
+    best_prob: float,
+    form_matches: int,
+    h2h_matches: int,
+    form_denom: int = 10,
+    h2h_denom: int = 8,
+) -> float:
+    """Confidence = pick edge (how far above 50/50) + data quality (form & h2h)."""
+    pick_edge = max(0.0, (best_prob - 0.50) / 0.50)
+    form_factor = min(1.0, form_matches / form_denom)
+    h2h_factor = min(1.0, h2h_matches / h2h_denom)
+    raw = (0.40 * pick_edge) + (0.35 * form_factor) + (0.25 * h2h_factor)
+    return round(max(0.0, min(1.0, raw)), 4)
 
 
 def _value_bet(probability: float) -> tuple[bool, float]:
@@ -361,23 +403,12 @@ class T20PredictionEngine:
         fi_low = int(first_innings * 0.88)
         fi_high = int(first_innings * 1.12)
 
-        # --- Recommendation ---
-        if max(t1_win, t2_win) >= 0.62:
-            winner = team1 if t1_win > t2_win else team2
-            bet = f"{winner} to Win"
-            market = "Match Winner"
-            best_prob = max(t1_win, t2_win)
-        else:
-            bet = f"Over {runs_line} Runs"
-            market = "Total Runs"
-            best_prob = over_prob
+        # --- Recommendation: always pick the highest-probability option ---
+        bet, market, best_prob = _best_pick(team1, team2, t1_win, t2_win, over_prob, runs_line)
 
-        # --- Confidence ---
-        prob_gap = abs(t1_win - t2_win)
-        form_factor = min(1.0, (team1_form.matches_played + team2_form.matches_played) / 10)
-        h2h_factor = min(1.0, h2h.matches_played / 8)
-        confidence = (0.50 * prob_gap / 0.5) + (0.30 * form_factor) + (0.20 * h2h_factor)
-        confidence = max(0.0, min(1.0, confidence))
+        # --- Confidence: pick strength + data quality ---
+        form_total = team1_form.matches_played + team2_form.matches_played
+        confidence = _pick_confidence(best_prob, form_total, h2h.matches_played)
 
         is_value, ev = _value_bet(best_prob)
 
@@ -489,21 +520,10 @@ class ODIPredictionEngine:
         fi_low = int(first_innings * 0.90)
         fi_high = int(first_innings * 1.10)
 
-        if max(t1_win, t2_win) >= 0.60:
-            winner = team1 if t1_win > t2_win else team2
-            bet = f"{winner} to Win"
-            market = "Match Winner"
-            best_prob = max(t1_win, t2_win)
-        else:
-            bet = f"Over {runs_line} Runs"
-            market = "Total Runs"
-            best_prob = over_prob
+        bet, market, best_prob = _best_pick(team1, team2, t1_win, t2_win, over_prob, runs_line)
 
-        prob_gap = abs(t1_win - t2_win)
-        form_factor = min(1.0, (team1_form.matches_played + team2_form.matches_played) / 10)
-        h2h_factor = min(1.0, h2h.matches_played / 8)
-        confidence = (0.50 * prob_gap / 0.5) + (0.30 * form_factor) + (0.20 * h2h_factor)
-        confidence = max(0.0, min(1.0, confidence))
+        form_total = team1_form.matches_played + team2_form.matches_played
+        confidence = _pick_confidence(best_prob, form_total, h2h.matches_played)
 
         is_value, ev = _value_bet(best_prob)
 
@@ -630,26 +650,12 @@ class TestPredictionEngine:
         runs_line = round((bench * 2) / 50) * 50
         over_prob = 0.50  # Test totals are harder to predict
 
-        max_decisive = max(t1_win, t2_win)
-        if max_decisive >= 0.55:
-            winner = team1 if t1_win > t2_win else team2
-            bet = f"{winner} to Win"
-            market = "Match Winner"
-            best_prob = max_decisive
-        elif draw_prob >= 0.35:
-            bet = "Draw"
-            market = "Match Winner"
-            best_prob = draw_prob
-        else:
-            bet = f"Over {runs_line} Runs (Combined)"
-            market = "Total Runs"
-            best_prob = over_prob
+        bet, market, best_prob = _best_pick(
+            team1, team2, t1_win, t2_win, over_prob, runs_line, draw_prob
+        )
 
-        prob_gap = max(t1_win, t2_win, draw_prob) - sorted([t1_win, t2_win, draw_prob])[-2]
-        form_factor = min(1.0, (team1_form.matches_played + team2_form.matches_played) / 6)
-        h2h_factor = min(1.0, h2h.matches_played / 5)
-        confidence = (0.50 * prob_gap / 0.4) + (0.30 * form_factor) + (0.20 * h2h_factor)
-        confidence = max(0.0, min(1.0, confidence))
+        form_total = team1_form.matches_played + team2_form.matches_played
+        confidence = _pick_confidence(best_prob, form_total, h2h.matches_played, form_denom=6, h2h_denom=5)
 
         is_value, ev = _value_bet(best_prob)
 
