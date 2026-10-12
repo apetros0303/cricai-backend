@@ -16,8 +16,8 @@ class Settings(BaseSettings):
 
     CRICAPI_BASE_URL: str = "https://api.cricapi.com/v1"
 
-    # Paid plan: 10000/day. Free tier: 100/day.
-    CRICAPI_DAILY_LIMIT: int = 10000
+    # S plan: 2000/day. Free tier: 100/day.
+    CRICAPI_DAILY_LIMIT: int = 2000
 
     FREE_AI_TIPS_PER_DAY: int = 3
 
