@@ -148,17 +148,26 @@ class CricApiClient:
         """
         Fantasy Match Points for a finished match — batting/bowling/catching pts per player.
         Cached for 7 days (finished match data is immutable).
-        Endpoint: match_points?id=<match_id>
+        Tries match_points first, then match_fantasy_points as fallback.
         """
         cache_key = f"fantasy:{match_id}"
         if cache_key in _fantasy_cache:
             logger.debug(f"Fantasy cache hit: {match_id}")
             return _fantasy_cache[cache_key]
-        data = await self._get("match_points", {"id": match_id})
-        result = data.get("data")
-        if result:
-            _fantasy_cache[cache_key] = result
-        return result
+
+        for endpoint in ("match_points", "match_fantasy_points"):
+            try:
+                data = await self._get(endpoint, {"id": match_id})
+                result = data.get("data")
+                if result:
+                    if endpoint != "match_points":
+                        logger.info(f"Fantasy points: '{endpoint}' succeeded (primary 'match_points' failed)")
+                    _fantasy_cache[cache_key] = result
+                    return result
+            except Exception as e:
+                logger.warning(f"Fantasy points endpoint '{endpoint}' failed for {match_id}: {e}")
+
+        return None
 
     async def search_players(self, name: str) -> list[dict]:
         data = await self._get("players", {"search": name, "offset": 0})
